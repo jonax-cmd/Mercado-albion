@@ -6,7 +6,7 @@ from datetime import datetime
 # Configuración de la página estilo Albion (Modo Oscuro/Ancho)
 st.set_page_config(page_title="Albion Market Trader", page_icon="💰", layout="wide")
 
-# Estilos CSS personalizados para imitar la interfaz del juego - CORREGIDO MANDATORIO
+# Estilos CSS personalizados para imitar la interfaz del juego
 st.markdown("""
     <style>
     .stApp { background-color: #12161a; color: #f1f1f1; }
@@ -28,7 +28,7 @@ CIUDADES_INFO = {
     "Black Market": {"color": "#34495e", "emoji": "💀"}
 }
 
-# Inicializar st.session_state para que la app NO se reinicie al tocar botones o selectores
+# Inicializar st.session_state para mantener los datos estables
 if "search_results" not in st.session_state:
     st.session_state.search_results = None
 if "last_item_id" not in st.session_state:
@@ -40,10 +40,9 @@ st.caption("Filtros avanzados con historial y calculadora financiera sin límite
 # --- SECCIÓN 1: FILTROS ESTILO ALBION ---
 st.subheader("🗂️ Filtros de Búsqueda")
 
-# Diccionario básico de mapeo en español para pruebas estables
 item_input = st.text_input("Buscar ítem en español (Ej: Caballo, Espada, Arco)", value="Caballo")
 
-# Mapeo simple automático para asegurar que el ID técnico sea perfecto
+# Mapeo simple automático
 mapping = {"caballo": "MOUNT_HORSE", "espada": "MAIN_SWORD", "arco": "2H_BOW"}
 base_id = mapping.get(item_input.lower().strip(), "MOUNT_HORSE")
 
@@ -55,7 +54,6 @@ with col2:
 with col3:
     quality = st.selectbox("Calidad", ["Normal", "Buena", "Notable", "Sobresaliente", "Excelente"], index=0)
 
-# Mapear calidad a número técnico de la API
 quality_map = {"Normal": 1, "Buena": 2, "Notable": 3, "Sobresaliente": 4, "Excelente": 5}
 q_val = quality_map[quality]
 
@@ -66,47 +64,40 @@ st.info(f"📦 ID Técnico Generado: **{item_id}** | Calidad: **{quality}**")
 
 # Botón de búsqueda principal
 if st.button("🔄 BUSCAR EN EL MERCADO", use_container_width=True):
-    with st.spinner("Conectando con el servidor de Albion Americas (West)..."):
-        # Consulta de precios en tiempo real
+    with st.spinner("Conectando con el servidor de Albion Americas..."):
         url = f"https://west.albion-online-data.com/api/v2/stats/prices/{item_id}?locations=Lymhurst,Bridgewatch,Thetford,FortSterling,Martlock,Caerleon,BlackMarket&qualities={q_val}"
         
         try:
-            response = requests.get(url).json()
-            
-            # Consulta secundaria de Historial para rellenar los datos vacíos (Fallback)
-            url_hist = f"https://west.albion-online-data.com/api/v2/stats/history/{item_id}?locations=Lymhurst,Bridgewatch,Thetford,FortSterling,Martlock,Caerleon,BlackMarket&qualities={q_val}&time-scale=24"
-            hist_response = requests.get(url_hist).json()
-            
+            response = requests.get(url)
             data_rows = []
-            for loc in CIUDADES_INFO.keys():
-                match = next((x for x in response if x['location'] == (loc if loc != "Black Market" else "Black Market")), None)
-                
-                sell_price = match['sell_price_min'] if match and match.get('sell_price_min') else 0
-                buy_price = match['buy_price_max'] if match and match.get('buy_price_max') else 0
-                age_str = "En vivo"
-                
-                if sell_price == 0 or buy_price == 0:
-                    hist_match = next((x for x in hist_response if x['location'] == loc), None)
-                    if hist_match and hist_match.get('data'):
-                        last_point = hist_match['data'][-1]
-                        sell_price = sell_price if sell_price > 0 else last_point.get('avg_price', 0)
-                        buy_price = buy_price if buy_price > 0 else last_point.get('avg_price', 0)
-                        age_str = "Histórico (Gráfico)"
-                
-                data_rows.append({
-                    "Ciudad": loc,
-                    "Orden de Venta": sell_price,
-                    "Orden de Compra": buy_price,
-                    "Origen": age_str
-                })
             
-            st.session_state.search_results = pd.DataFrame(data_rows)
-            st.session_state.last_item_id = item_id
-            
+            # Controlamos si la API responde correctamente y trae una lista válida
+            if response.status_code == 200 and isinstance(response.json(), list):
+                json_data = response.json()
+                
+                for loc in CIUDADES_INFO.keys():
+                    # Buscamos de forma segura si existe la localización en la respuesta
+                    match = next((x for x in json_data if isinstance(x, dict) and x.get('location') == loc), None)
+                    
+                    sell_price = match.get('sell_price_min', 0) if match else 0
+                    buy_price = match.get('buy_price_max', 0) if match else 0
+                    
+                    data_rows.append({
+                        "Ciudad": loc,
+                        "Orden de Venta": sell_price if sell_price else 0,
+                        "Orden de Compra": buy_price if buy_price else 0,
+                        "Origen": "En vivo" if (sell_price or buy_price) else "Sin datos recientes"
+                    })
+                
+                st.session_state.search_results = pd.DataFrame(data_rows)
+                st.session_state.last_item_id = item_id
+            else:
+                st.warning("⚠️ El servidor de Albion no devolvió datos para este ítem específico en este momento.")
+                
         except Exception as e:
-            st.error(f"Error al conectar con la base de datos de Albion: {e}")
+            st.error(f"Aviso: Servidor de datos ocupado. Intenta de nuevo en unos segundos.")
 
-# --- SECCIÓN 2: MOSTRAR TABLA DE PRECIOS LIMPIOS ---
+# --- SECCIÓN 2: MOSTRAR TABLA DE PRECIOS ---
 if st.session_state.search_results is not None:
     df = st.session_state.search_results
     st.subheader(f"📊 Precios Comparativos: {item_input.title()} T{tier}")
@@ -122,20 +113,23 @@ if st.session_state.search_results is not None:
                 <strong>{c_info['emoji']} {c_name}</strong> | 
                 Orden de Venta: <span class="price-text">{row['Orden de Venta']:,}</span> | 
                 Orden de Compra: <span class="price-text">{row['Orden de Compra']:,}</span> 
-                <br><small style='color: #888;'>Dato: {row['Origen']}</small>
+                <br><small style='color: #888;'>Estado: {row['Origen']}</small>
             </div>
         """, unsafe_allow_html=True)
 
-    # --- SECCIÓN 3: EL NUEVO MÓDULO DE ARBITRAJE ---
+    # --- SECCIÓN 3: MÓDULO DE ARBITRAJE ---
     st.markdown("---")
     st.subheader("💰 Calculadora de Ganancias Reales")
     
     ciudades_reales = df[~df['Ciudad'].isin(['Caerleon', 'Black Market'])]
-    caerleon_bm = df[df['Ciudad'].isin(['Caerleon', 'Black Market'])]
     
-    if not ciudades_reales.empty and not caerleon_bm.empty:
-        cheapest_buy_row = ciudades_reales[ciudades_reales['Orden de Venta'] > 0].sort_values(by="Orden de Venta").iloc[0]
-        highest_sell_row = df.sort_values(by="Orden de Compra", ascending=False).iloc[0]
+    # Validamos que existan precios válidos mayores a 0 para calcular rutas automáticas
+    df_valid_buy = ciudades_reales[ciudades_reales['Orden de Venta'] > 0]
+    df_valid_sell = df[df['Orden de Compra'] > 0]
+    
+    if not df_valid_buy.empty and not df_valid_sell.empty:
+        cheapest_buy_row = df_valid_buy.sort_values(by="Orden de Venta").iloc[0]
+        highest_sell_row = df_valid_sell.sort_values(by="Orden de Compra", ascending=False).iloc[0]
         
         compra_costo = cheapest_buy_row['Orden de Venta']
         venta_ingreso = highest_sell_row['Orden de Compra']
@@ -158,11 +152,11 @@ if st.session_state.search_results is not None:
                 st.markdown(f"<div class='profit-negative'>👑 Con Premium (4% Tax):<br>{neto_prem:,} plata (Pérdida)</div>", unsafe_allow_html=True)
         with col_p2:
             if neto_sin > 0:
-                st.markdown(f"<div class='profit-positive'>⚠️ Sin Premium (8% Tax):<br>+{neto_sin:,} plata / unidad</div>", unsafe_allowed_html=True)
+                st.markdown(f"<div class='profit-positive'>⚠️ Sin Premium (8% Tax):<br>+{neto_sin:,} plata / unidad</div>", unsafe_allow_html=True)
             else:
                 st.markdown(f"<div class='profit-negative'>⚠️ Sin Premium (8% Tax):<br>{neto_sin:,} plata (Pérdida)</div>", unsafe_allow_html=True)
 
-    # 2. Calculadora Manual Personalizada
+    # Calculadora Manual Personalizada
     st.markdown("### 🗺️ Planificar Ruta Personalizada")
     
     lista_ciudades = list(CIUDADES_INFO.keys())
@@ -178,7 +172,10 @@ if st.session_state.search_results is not None:
     ganancia_manual = int((p_venta * (1 - tax_rate)) - p_compra)
     
     st.markdown(f"**Costo en {c_origen}:** {p_compra:,} | **Venta en {c_destino}:** {p_venta:,}")
-    if ganancia_manual > 0:
-        st.markdown(f"<div class='profit-positive'>✅ Ganancia de tu viaje: +{ganancia_manual:,} plata neta por unidad</div>", unsafe_allow_html=True)
+    if (p_compra > 0 or p_venta > 0):
+        if ganancia_manual > 0:
+            st.markdown(f"<div class='profit-positive'>✅ Ganancia de tu viaje: +{ganancia_manual:,} plata neta por unidad</div>", unsafe_allow_html=True)
+        else:
+            st.markdown(f"<div class='profit-negative'>❌ Pérdida de tu viaje: {ganancia_manual:,} plata neta por unidad</div>", unsafe_allow_html=True)
     else:
-        st.markdown(f"<div class='profit-negative'>❌ Pérdida de tu viaje: {ganancia_manual:,} plata neta por unidad</div>", unsafe_allow_html=True)
+        st.markdown("<div class='profit-negative'>❌ No hay órdenes de mercado registradas para esta combinación de ciudades.</div>", unsafe_allow_html=True)
