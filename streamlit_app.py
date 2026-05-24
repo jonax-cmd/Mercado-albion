@@ -6,7 +6,7 @@ from datetime import datetime
 # Configuración de la página estilo Albion (Modo Oscuro/Ancho)
 st.set_page_config(page_title="Albion Market Trader", page_icon="💰", layout="wide")
 
-# Estilos CSS personalizados para imitar la interfaz del juego
+# Estilos CSS personalizados para imitar la interfaz del juego - CORREGIDO AQUÍ
 st.markdown("""
     <style>
     .stApp { background-color: #12161a; color: #f1f1f1; }
@@ -15,7 +15,7 @@ st.markdown("""
     .profit-positive { color: #2ecc71; font-weight: bold; background-color: rgba(46, 204, 113, 0.1); padding: 10px; border-radius: 5px; }
     .profit-negative { color: #e74c3c; font-weight: bold; background-color: rgba(231, 76, 60, 0.1); padding: 10px; border-radius: 5px; }
     </style>
-""", unsafe_allowed_allowed_html=True)
+""", unsafe_allowed_html=True)
 
 # Diccionario de ciudades con sus colores oficiales del Lore y emojis
 CIUDADES_INFO = {
@@ -67,7 +67,7 @@ st.info(f"📦 ID Técnico Generado: **{item_id}** | Calidad: **{quality}**")
 # Botón de búsqueda principal
 if st.button("🔄 BUSCAR EN EL MERCADO", use_container_width=True):
     with st.spinner("Conectando con el servidor de Albion Americas (West)..."):
-        # Consulta de precios en tiempo real (Servidor West de forma mandatoria)
+        # Consulta de precios en tiempo real
         url = f"https://west.albion-online-data.com/api/v2/stats/prices/{item_id}?locations=Lymhurst,Bridgewatch,Thetford,FortSterling,Martlock,Caerleon,BlackMarket&qualities={q_val}"
         
         try:
@@ -79,14 +79,12 @@ if st.button("🔄 BUSCAR EN EL MERCADO", use_container_width=True):
             
             data_rows = []
             for loc in CIUDADES_INFO.keys():
-                # Buscar en respuesta en tiempo real
                 match = next((x for x in response if x['location'] == (loc if loc != "Black Market" else "Black Market")), None)
                 
                 sell_price = match['sell_price_min'] if match and match.get('sell_price_min') else 0
                 buy_price = match['buy_price_max'] if match and match.get('buy_price_max') else 0
                 age_str = "En vivo"
                 
-                # PARCHE DE ESTABILIDAD: Si viene en cero o vacío, jalar el último dato histórico conocido
                 if sell_price == 0 or buy_price == 0:
                     hist_match = next((x for x in hist_response if x['location'] == loc), None)
                     if hist_match and hist_match.get('data'):
@@ -102,7 +100,6 @@ if st.button("🔄 BUSCAR EN EL MERCADO", use_container_width=True):
                     "Origen": age_str
                 })
             
-            # Guardar en el estado de la sesión para evitar reinicios molestos
             st.session_state.search_results = pd.DataFrame(data_rows)
             st.session_state.last_item_id = item_id
             
@@ -114,14 +111,12 @@ if st.session_state.search_results is not None:
     df = st.session_state.search_results
     st.subheader(f"📊 Precios Comparativos: {item_input.title()} T{tier}")
     
-    # Mostrar la lista limpia ordenada de menor a mayor precio de venta
     df_sorted = df.sort_values(by="Orden de Venta", ascending=True)
     
     for _, row in df_sorted.iterrows():
         c_name = row['Ciudad']
         c_info = CIUDADES_INFO.get(c_name, {"color": "#fff", "emoji": "🏙️"})
         
-        # Diseño limpio de cada fila usando HTML y los colores del juego
         st.markdown(f"""
             <div class="city-card" style="border-left-color: {c_info['color']}; background-color: #1e252b;">
                 <strong>{c_info['emoji']} {c_name}</strong> | 
@@ -135,14 +130,11 @@ if st.session_state.search_results is not None:
     st.markdown("---")
     st.subheader("💰 Calculadora de Ganancias Reales")
     
-    # 1. Ruta Absoluta Óptima de Verdad (Escanea todas las ciudades reales contra Caerleon/Black Market)
     ciudades_reales = df[~df['Ciudad'].isin(['Caerleon', 'Black Market'])]
     caerleon_bm = df[df['Ciudad'].isin(['Caerleon', 'Black Market'])]
     
     if not ciudades_reales.empty and not caerleon_bm.empty:
-        # Encontrar la ciudad más barata para COMPRAR
         cheapest_buy_row = ciudades_reales[ciudades_reales['Orden de Venta'] > 0].sort_values(by="Orden de Venta").iloc[0]
-        # Encontrar el precio más alto donde te COMPRAN (Ya sea en Caerleon o el Black Market)
         highest_sell_row = df.sort_values(by="Orden de Compra", ascending=False).iloc[0]
         
         compra_costo = cheapest_buy_row['Orden de Venta']
@@ -155,7 +147,6 @@ if st.session_state.search_results is not None:
         with col_r2:
             st.metric(label=f"🔴 Vender en {highest_sell_row['Ciudad']}", value=f"{venta_ingreso:,} plata")
             
-        # Cálculos de impuestos exactos (4% con Premium, 8% sin Premium)
         neto_prem = int((venta_ingreso * 0.96) - compra_costo)
         neto_sin = int((venta_ingreso * 0.92) - compra_costo)
         
@@ -171,7 +162,7 @@ if st.session_state.search_results is not None:
             else:
                 st.markdown(f"<div class='profit-negative'>⚠️ Sin Premium (8% Tax):<br>{neto_sin:,} plata (Pérdida)</div>", unsafe_allowed_html=True)
 
-    # 2. Calculadora Manual Personalizada (No recarga la página al cambiar opciones)
+    # 2. Calculadora Manual Personalizada
     st.markdown("### 🗺️ Planificar Ruta Personalizada")
     
     lista_ciudades = list(CIUDADES_INFO.keys())
@@ -181,7 +172,6 @@ if st.session_state.search_results is not None:
     has_premium = st.toggle("¿Tienes cuenta Premium activa?", value=True)
     tax_rate = 0.04 if has_premium else 0.08
     
-    # Extraer precios seleccionados manualmente
     p_compra = df[df['Ciudad'] == c_origen]['Orden de Venta'].values[0]
     p_venta = df[df['Ciudad'] == c_destino]['Orden de Compra'].values[0]
     
