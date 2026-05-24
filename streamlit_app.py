@@ -1,211 +1,134 @@
 import streamlit as st
 import requests
 import pandas as pd
-import plotly.graph_objects as go
-import plotly.express as px
 from datetime import datetime
+import time
 
-# ══════════════════════════════════════════════════════════════════════════════
-# CONFIGURACIÓN
-# ══════════════════════════════════════════════════════════════════════════════
+# ====================== CONFIG ======================
+st.set_page_config(page_title="Mercado Albion", layout="wide", page_icon="⚔️")
 
-BASE_URL   = "https://west.albion-online-data.com/api/v2"
+BASE_URL = "https://west.albion-online-data.com/api/v2"
 SEARCH_URL = "https://gameinfo.albiononline.com/api/gameinfo/search"
 
-CITIES = ["Caerleon", "Bridgewatch", "Fort Sterling", "Lymhurst", "Martlock", "Thetford", "Brecilien", "Black Market"]
+CITIES = ["Caerleon", "Bridgewatch", "Lymhurst", "Thetford", "Fort Sterling", "Martlock"]
 
-QUALITY_MAP = {
-    "Normal": 1, "Buena": 2, "Sobresaliente": 3, 
-    "Excelente": 4, "Obra Maestra": 5
+QUALITY_MAP = {"Normal":1, "Buena":2, "Sobresaliente":3, "Excelente":4, "Obra Maestra":5}
+
+# Items fallback confiables
+FALLBACK_ITEMS = {
+    "T4_PLATE_HELMET": "Casco de Placa T4",
+    "T5_PLATE_HELMET": "Casco de Placa T5",
+    "T4_IRON_ORE": "Mineral de Hierro T4",
+    "T5_FIBER": "Fibra T5",
+    "T4_WOOD": "Madera T4",
+    "T4_HIDE": "Piel T4",
+    "T4_SWORD": "Espada T4",
+    "T5_BAG": "Bolsa T5",
 }
 
-CATEGORIAS = {
-    "⚔️  Armas": {
-        "🗡️  Espadas": "Sword", "🪓  Hachas": "Axe", "🔨  Martillos": "Hammer",
-        "🏹  Arcos": "Bow", "🔥  Bastones de fuego": "Fire Staff",
-        "❄️  Bastones de hielo": "Ice Staff", "💀  Bastones de maldición": "Curse Staff",
-        "✨  Bastones de sagrado": "Holy Staff", "🌿  Bastones de naturaleza": "Nature Staff",
-        "🗡️  Dagas": "Dagger", "🛡️  Lanzas": "Spear", "🪄  Bastones de arcano": "Arcane Staff",
-    },
-    "🛡️  Armaduras": {
-        "🧥  Armadura de tela": "Cloth", "🥋  Armadura de cuero": "Leather", 
-        "⚙️  Armadura de placa": "Plate",
-    },
-    "🧪  Recursos": {
-        "🪨  Mineral": "Ore", "🪵  Madera": "Wood", "🐄  Cuero crudo": "Hide",
-        "🌾  Fibra": "Fiber", "🪨  Piedra": "Rock",
-    },
-    "💊  Consumibles": {
-        "🍖  Comida": "Food", "⚗️  Pociones": "Potion",
-    },
-    "🔍  Buscar por nombre": {}
-}
-
-# ══════════════════════════════════════════════════════════════════════════════
-# FUNCIONES API
-# ══════════════════════════════════════════════════════════════════════════════
-
+# ====================== FUNCIONES ======================
 @st.cache_data(ttl=60)
-def search_items(query: str) -> list:
+def search_items(query: str):
     try:
-        resp = requests.get(SEARCH_URL, params={"q": query, "limit": 25}, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        items = []
-        for item in data.get("items", []):
-            name = (item.get("localizedNames", {}).get("ES") or 
-                    item.get("localizedNames", {}).get("EN-US") or 
-                    item.get("uniqueName", ""))
-            items.append({"id": item.get("uniqueName", ""), "name": name})
-        return items
+        r = requests.get(SEARCH_URL, params={"q": query, "limit": 25}, timeout=8)
+        if r.status_code == 200:
+            items = []
+            for item in r.json().get("items", []):
+                name = item.get("localizedNames", {}).get("ES") or item.get("localizedNames", {}).get("EN-US")
+                if name:
+                    items.append({"id": item["uniqueName"], "name": name})
+            return items
+        return []
     except:
         return []
 
 
-@st.cache_data(ttl=45)
-def get_prices(item_id: str, qualities: tuple) -> pd.DataFrame:
-    if not item_id:
-        return pd.DataFrame()
-    
-    url = f"{BASE_URL}/stats/prices/{item_id}"
-    params = {
-        "locations": ",".join(CITIES),
-        "qualities": ",".join(map(str, qualities))
-    }
+@st.cache_data(ttl=40)
+def get_prices(item_id: str, qualities: list):
     try:
-        resp = requests.get(url, params=params, timeout=15)
-        if resp.status_code != 200:
-            st.error(f"API devolvió error {resp.status_code}")
-            return pd.DataFrame()
+        url = f"{BASE_URL}/stats/prices/{item_id}"
+        params = {"locations": ",".join(CITIES), "qualities": ",".join(map(str, qualities))}
+        r = requests.get(url, params=params, timeout=12)
         
-        data = resp.json()
-        if not data:
-            st.warning("No hay datos de precios para este item.")
-            return pd.DataFrame()
-
+        if r.status_code != 200:
+            return pd.DataFrame(), f"Error API ({r.status_code})"
+        
+        data = r.json()
         rows = []
         for entry in data:
-            q_num = entry.get("quality", 1)
-            q_label = {1:"Normal",2:"Buena",3:"Sobresaliente",4:"Excelente",5:"Obra Maestra"}.get(q_num, "Normal")
             rows.append({
                 "Ciudad": entry.get("location", "—"),
-                "Calidad": q_label,
-                "Precio Venta": entry.get("sell_price_min", 0),
-                "Fecha Venta": _parse_date(entry.get("sell_price_min_date")),
-                "Precio Compra": entry.get("buy_price_max", 0),
-                "Fecha Compra": _parse_date(entry.get("buy_price_max_date")),
+                "Calidad": {1:"Normal",2:"Buena",3:"Sobresaliente",4:"Excelente",5:"Obra Maestra"}.get(entry.get("quality"), "Normal"),
+                "Venta": entry.get("sell_price_min", 0),
+                "Compra": entry.get("buy_price_max", 0),
+                "Fecha Venta": entry.get("sell_price_min_date", "—")[:16].replace("T", " "),
             })
-        return pd.DataFrame(rows)
+        return pd.DataFrame(rows), "OK"
     except Exception as e:
-        st.error(f"Error al consultar precios: {e}")
-        return pd.DataFrame()
+        return pd.DataFrame(), f"Error: {e}"
 
 
-@st.cache_data(ttl=60)
-def get_history(item_id: str, city: str, quality: int, time_scale: int):
-    try:
-        url = f"{BASE_URL}/stats/history/{item_id}"
-        params = {"locations": city, "qualities": quality, "time-scale": time_scale}
-        resp = requests.get(url, params=params, timeout=12)
-        resp.raise_for_status()
-        data = resp.json()
-        
-        rows = []
-        for entry in data:
-            for point in entry.get("data", []):
-                rows.append({
-                    "Hora": _parse_date(point.get("timestamp")),
-                    "Precio Prom": point.get("avg_price", 0),
-                    "Volumen": point.get("item_count", 0),
-                })
-        df = pd.DataFrame(rows)
-        return df.sort_values("Hora").reset_index(drop=True) if not df.empty else df
-    except:
-        return pd.DataFrame()
-
-
-def _parse_date(date_str):
-    if not date_str:
-        return "—"
-    try:
-        dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
-        return dt.strftime("%d/%m %H:%M")
-    except:
-        return "—"
-
-
-def fmt(value):
-    if not value or value == 0:
-        return "—"
-    return f"{int(value):,}"
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# INTERFAZ
-# ══════════════════════════════════════════════════════════════════════════════
-
-st.set_page_config(page_title="Mercado Albion", page_icon="⚔️", layout="wide")
-
-# (Mantengo tu CSS completo aquí - lo omito por brevedad, pero cópialo tal cual del código original)
-
-# ... [Pega aquí todo tu bloque de <style> CSS que tenías] ...
+# ====================== INTERFAZ ======================
+st.title("⚔️ Mercado Albion - Precios Live")
 
 with st.sidebar:
-    st.markdown("## ⚔️ Mercado Albion")
-    st.divider()
+    st.header("Buscar Item")
+    modo = st.radio("Modo", ["Items Populares", "Búsqueda Libre"])
 
-    categoria = st.selectbox("📂 Categoría", list(CATEGORIAS.keys()))
-
-    item_id = None
-    item_name = "—"
-
-    if categoria == "🔍  Buscar por nombre":
-        query = st.text_input("🔍 Buscar item", placeholder="ej: espada t5, iron ore...")
-        if query:
-            with st.spinner("Buscando..."):
-                results = search_items(query)
-            if results:
-                options = {r["name"]: r["id"] for r in results}
-                sel = st.selectbox("Resultados", list(options.keys()))
-                item_id = options[sel]
-                item_name = sel
+    if modo == "Items Populares":
+        item_id = st.selectbox("Selecciona item", options=list(FALLBACK_ITEMS.keys()), format_func=lambda x: f"{x} - {FALLBACK_ITEMS[x]}")
+        item_name = FALLBACK_ITEMS[item_id]
     else:
-        subcats = CATEGORIAS[categoria]
-        subcat = st.selectbox("📁 Tipo", list(subcats.keys()))
-        keyword = subcats[subcat]
-        tier = st.selectbox("⚙️ Tier", ["T4","T5","T6","T7","T8","T3"])
-        
-        query_auto = f"{tier} {keyword}"
-        with st.spinner("Cargando items..."):
-            results = search_items(query_auto)
-        if results:
-            options = {r["name"]: r["id"] for r in results}
-            sel = st.selectbox("📦 Selecciona item", list(options.keys()))
-            item_id = options[sel]
-            item_name = sel
+        query = st.text_input("Buscar item (ej: T5 Plate, Fiber, Sword)")
+        if query:
+            results = search_items(query)
+            if results:
+                item_name = st.selectbox("Resultados", [r["name"] for r in results])
+                item_id = next(r["id"] for r in results if r["name"] == item_name)
+            else:
+                st.error("No se encontraron items")
+                item_id = None
 
     st.divider()
-    selected_quals = st.multiselect("✨ Calidades", list(QUALITY_MAP.keys()), default=["Normal", "Buena"])
-    qualities = tuple(QUALITY_MAP[q] for q in selected_quals)
+    calidades = st.multiselect("Calidades", options=list(QUALITY_MAP.keys()), default=["Normal", "Buena"])
+    qualities_num = [QUALITY_MAP[q] for q in calidades]
 
-# ====================== CONTENIDO PRINCIPAL ======================
+    auto_refresh = st.checkbox("Auto-actualizar cada 40s", value=True)
 
-st.markdown("# ⚔️ MERCADO DE ALBION")
+# ====================== MAIN ======================
+if item_id:
+    col1, col2 = st.columns([3,1])
+    with col1:
+        st.subheader(f"📌 {item_name}  ({item_id})")
+    
+    with st.spinner("Consultando precios..."):
+        df, status = get_prices(item_id, qualities_num)
+    
+    if status == "OK" and not df.empty:
+        st.success("✅ Datos actualizados")
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        
+        # Métricas
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Venta más baja", f"{df['Venta'].min():,}" if df['Venta'].min() > 0 else "—")
+        c2.metric("Compra más alta", f"{df['Compra'].max():,}" if df['Compra'].max() > 0 else "—")
+        c3.metric("Ciudades con datos", len(df["Ciudad"].unique()))
+        
+    else:
+        st.error(status)
+        st.info("Prueba con otro item o calidades")
+else:
+    st.info("Selecciona un item para comenzar")
 
-if not item_id:
-    st.info("Selecciona una categoría e item en el menú lateral")
-    st.stop()
+st.divider()
+st.caption("Datos de Albion Online Data Project | Actualizado cada 40 segundos")
 
-with st.spinner(f"Consultando {item_name}..."):
-    df_prices = get_prices(item_id, qualities)
-
-if df_prices.empty:
-    st.error("No se encontraron precios. Prueba otra calidad o tier.")
-    st.stop()
-
-tab1, tab2, tab3 = st.tabs(["📊 Precios por Ciudad", "📈 Historial", "💰 Arbitraje"])
-
-# Aquí irían las tabs (tab1, tab2, tab3) con tu código original de visualización.
-# Por ahora te doy la versión mínima funcional. ¿Quieres que te agregue las tabs completas ahora?
-
-st.caption("Datos de Albion Online Data Project • Actualizado cada 45-60 segundos")
+# Auto Refresh
+if auto_refresh and item_id:
+    time.sleep(1)  # Pequeña pausa
+    if 'last_refresh' not in st.session_state:
+        st.session_state.last_refresh = time.time()
+    
+    if time.time() - st.session_state.last_refresh > 40:
+        st.session_state.last_refresh = time.time()
+        st.rerun()
