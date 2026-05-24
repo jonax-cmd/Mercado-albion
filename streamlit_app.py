@@ -1,40 +1,58 @@
 import streamlit as st
-import requests
 import pandas as pd
+import requests
+import time
 
-st.set_page_config(page_title="Albion Market", layout="wide")
-st.title("🦅 Albion Market - Américas")
+st.set_page_config(page_title="Albion Prices Live", layout="wide")
+st.title("📈 Albion Online - Precios en Tiempo Real")
 
-item_id = st.text_input("ID Técnico (Ej: T4_HORSE)", "T4_HORSE")
+# Sidebar
+st.sidebar.header("Configuración")
+ciudades = st.sidebar.multiselect(
+    "Ciudades",
+    ["Caerleon", "Bridgewatch", "Lymhurst", "Thetford", "Fort Sterling", "Martlock"],
+    default=["Caerleon", "Bridgewatch", "Lymhurst"]
+)
+refresh_rate = st.sidebar.slider("Actualizar cada (segundos)", 30, 300, 60)
 
-if st.button("BUSCAR"):
-    # Usamos la URL estándar que sí tiene certificado SSL válido
-    url = f"https://west.albion-online-data.com/api/v2/stats/prices/{item_id}.json"
-    
-    # Añadimos un encabezado de navegador para evitar el error SSL/Bloqueo
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-    }
-    
+# Búsqueda
+search = st.text_input("Buscar item (ej: T4 Plate, Iron Ore, etc.)", "")
+
+# Función para obtener precios
+def get_prices(items, locations):
     try:
-        response = requests.get(url, headers=headers)
+        url = f"https://west.albion-online-data.com/api/v2/stats/prices/{','.join(items)}.json?locations={','.join(locations)}"
+        response = requests.get(url)
+        data = response.json()
         
-        if response.status_code == 200:
-            data = response.json()
-            df = pd.DataFrame(data)
+        df = pd.DataFrame(data)
+        # Procesar para mostrar mejor
+        df['city'] = df['location']
+        df = df[['item_id', 'city', 'buy_price_max', 'sell_price_min', 'timestamp']]
+        return df
+    except:
+        st.error("Error al conectar con la API")
+        return pd.DataFrame()
+
+# Ejemplo de items populares (puedes expandir esto)
+items_populares = ["T4_PLATE_HELMET", "T5_FIBER", "T4_IRON_ORE", "T4_WOOD", "T4_HIDE"]
+
+if st.button("Actualizar Precios Ahora"):
+    with st.spinner("Cargando precios..."):
+        locations = [c.replace(" ", "") for c in ciudades]
+        df = get_prices(items_populares, locations)
+        
+        if not df.empty:
+            st.dataframe(df, use_container_width=True)
             
-            # Filtramos solo activos
-            if not df.empty and 'sell_price_min' in df.columns:
-                df_activos = df[df['sell_price_min'] > 0]
-                
-                if not df_activos.empty:
-                    st.table(df_activos[['city', 'sell_price_min', 'buy_price_max']])
-                else:
-                    st.warning("No hay órdenes de venta activas.")
-            else:
-                st.warning("No se encontraron datos.")
-        else:
-            st.error(f"Error en la API: {response.status_code}")
-            
-    except Exception as e:
-        st.error(f"Error de conexión: {e}")
+            # Tabla pivoteada (más legible)
+            pivot = df.pivot_table(index='item_id', columns='city', values='sell_price_min')
+            st.subheader("Precios de Venta Mínimo")
+            st.dataframe(pivot, use_container_width=True)
+
+# Auto-refresh
+if 'last_refresh' not in st.session_state:
+    st.session_state.last_refresh = time.time()
+
+if time.time() - st.session_state.last_refresh > refresh_rate:
+    st.rerun()
