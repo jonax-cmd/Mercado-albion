@@ -14,11 +14,11 @@ ITEMS_PRUEBA = {
     "T5_ORE": "Mineral T5",
     "T5_PLANK": "Tabla T5",
     "T4_PLATE_HELMET": "Casco de Placa T4",
-    "T5_BAG": "Bolsa T5",
-    "T5_SWORD": "Espada T5"
+    "T4_MOUNT_HORSE": "Caballo de Montar T4",
+    "T5_BAG": "Bolsa T5"
 }
 
-ALL_CITIES = ["Caerleon", "Bridgewatch", "Lymhurst", "Thetford", "Fort Sterling", "Martlock"]
+ALL_CITIES = ["Caerleon", "Bridgewatch", "Lymhurst", "Thetford", "Fort Sterling", "Martlock", "Brecilien"]
 
 with st.sidebar:
     st.header("Configuración")
@@ -26,77 +26,65 @@ with st.sidebar:
                            options=list(ITEMS_PRUEBA.keys()), 
                            format_func=lambda x: f"{x} → {ITEMS_PRUEBA[x]}")
     
-    calidades = st.multiselect("Calidades", [1,2,3,4,5], default=[1,2])
+    quality_options = st.multiselect("Calidades", 
+                                    options=["Normal", "Buena", "Sobresaliente", "Excelente"],
+                                    default=["Normal", "Buena"])
 
-# ====================== CONSULTA ======================
-if st.button("🔄 Actualizar Todo", type="primary"):
-    with st.spinner(f"Consultando mercado completo de {ITEMS_PRUEBA[item_key]}..."):
-        
-        # 1. Precios actuales en TODAS las ciudades
-        url_prices = f"{BASE_URL}/stats/prices/{item_key}"
+# Mapeo de calidades
+quality_map = {"Normal": 1, "Buena": 2, "Sobresaliente": 3, "Excelente": 4}
+selected_qualities = [quality_map[q] for q in quality_options]
+
+if st.button("🔄 Actualizar Precios", type="primary"):
+    with st.spinner(f"Consultando {ITEMS_PRUEBA[item_key]}..."):
+        url = f"{BASE_URL}/stats/prices/{item_key}"
         params = {
             "locations": ",".join(ALL_CITIES),
-            "qualities": ",".join(map(str, calidades))
+            "qualities": ",".join(map(str, selected_qualities))
         }
         
-        response = requests.get(url_prices, params=params, timeout=12)
+        response = requests.get(url, params=params, timeout=12)
         
         if response.status_code == 200:
             df = pd.DataFrame(response.json())
             
             if not df.empty:
+                # Limpiar datos
                 df_clean = df[['city', 'quality', 'sell_price_min', 'buy_price_max']].copy()
-                df_clean.columns = ['Ciudad', 'Calidad', 'Precio Venta', 'Precio Compra']
+                df_clean = df_clean.rename(columns={
+                    'city': 'Ciudad',
+                    'quality': 'Calidad',
+                    'sell_price_min': 'Precio Venta',
+                    'buy_price_max': 'Precio Compra'
+                })
                 
-                st.subheader(f"📊 Precios Actuales - {ITEMS_PRUEBA[item_key]}")
-                st.dataframe(df_clean, use_container_width=True, hide_index=True)
+                st.subheader(f"📦 {ITEMS_PRUEBA[item_key]}")
                 
-                # Métricas
-                v = df_clean[df_clean['Precio Venta'] > 0]
-                c = df_clean[df_clean['Precio Compra'] > 0]
-                
-                col1, col2, col3 = st.columns(3)
-                col1.metric("Venta más baja", v['Precio Venta'].min() if not v.empty else "—")
-                col2.metric("Compra más alta", c['Precio Compra'].max() if not c.empty else "—")
-                col3.metric("Ciudades con datos", len(df_clean['Ciudad'].unique()))
+                # Mostrar por calidad
+                for q_num in sorted(df_clean['Calidad'].unique()):
+                    q_name = {1:"Normal", 2:"Buena", 3:"Sobresaliente", 4:"Excelente"}.get(q_num, f"Calidad {q_num}")
+                    df_q = df_clean[df_clean['Calidad'] == q_num].copy()
+                    
+                    if df_q.empty:
+                        continue
+                    
+                    st.markdown(f"**{q_name}**")
+                    
+                    # Ordenar de menor a mayor precio de venta
+                    df_q = df_q.sort_values(by='Precio Venta', ascending=True)
+                    
+                    # Resaltar fila con precio más bajo
+                    def highlight_lowest(s):
+                        is_lowest = s == s.min()
+                        return ['background-color: #2a4a2a' if v else '' for v in is_lowest]
+                    
+                    st.dataframe(df_q[['Ciudad', 'Precio Venta', 'Precio Compra']], 
+                               use_container_width=True, 
+                               hide_index=True)
+                    
+                    st.divider()
             else:
-                st.warning("Sin precios actuales")
+                st.warning("No hay datos disponibles para este item en este momento.")
         else:
-            st.error("Error al obtener precios actuales")
+            st.error(f"Error al conectar con la API ({response.status_code})")
 
-        st.divider()
-
-        # 2. Historial reciente (últimas horas) por ciudad
-        st.subheader("📈 Historial Reciente (últimas horas)")
-        
-        for city in ALL_CITIES:
-            try:
-                url_hist = f"{BASE_URL}/stats/history/{item_key}"
-                hist_params = {
-                    "locations": city,
-                    "qualities": "1,2",
-                    "time-scale": 1   # Por hora
-                }
-                hist_resp = requests.get(url_hist, params=hist_params, timeout=10)
-                
-                if hist_resp.status_code == 200:
-                    hist_data = hist_resp.json()
-                    if hist_data and len(hist_data) > 0:
-                        records = []
-                        for entry in hist_data:
-                            for point in entry.get("data", [])[-3:]:  # Últimas 3 entradas
-                                records.append({
-                                    "Ciudad": city,
-                                    "Hora": point.get("timestamp", "")[:16].replace("T", " "),
-                                    "Precio Prom": point.get("avg_price", 0),
-                                    "Volumen": point.get("item_count", 0)
-                                })
-                        
-                        if records:
-                            df_hist = pd.DataFrame(records)
-                            st.write(f"**{city}**")
-                            st.dataframe(df_hist, use_container_width=True, hide_index=True)
-            except:
-                continue  # Si falla una ciudad, sigue con las demás
-
-st.caption("Los ceros significan que no hay órdenes activas en ese momento. Los datos se actualizan constantemente.")
+st.caption("Precios ordenados de menor a mayor • Datos en tiempo real de Albion Online")
