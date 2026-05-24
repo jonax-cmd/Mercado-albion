@@ -1,26 +1,29 @@
 import streamlit as st
 import requests
+import pandas as pd
 
-st.set_page_config(layout="wide")
-st.title("🦅 Albion Market - Prueba de Conexión")
+st.set_page_config(page_title="Albion Market", layout="wide")
+st.title("🦅 Albion Market Pro")
 
-item_id = st.text_input("ID Técnico (Ej: T4_BAG)", "T4_BAG")
+item_id = st.text_input("ID Técnico (Ej: T4_HORSE, T4_BAG, T4_MAIN_SWORD)", "T4_HORSE")
 
-if st.button("BUSCAR EN API V2"):
-    # Cambiamos la URL a la versión estándar documentada
+if st.button("BUSCAR PRECIOS REALES"):
     url = f"https://west.albion-online-data.com/api/v2/stats/prices/{item_id}.json"
     
     try:
         response = requests.get(url)
-        st.write(f"Estado de conexión: {response.status_code}")
         data = response.json()
         
-        if not data:
-            st.error("La API no devolvió nada.")
+        # Filtramos solo los resultados que tienen precio de venta mayor a 0
+        df = pd.DataFrame(data)
+        df_activos = df[df['sell_price_min'] > 0]
+        
+        if not df_activos.empty:
+            st.success(f"¡Datos encontrados para {item_id}!")
+            # Mostramos la tabla solo con las ciudades que tienen datos
+            st.table(df_activos[['city', 'sell_price_min', 'buy_price_max', 'sell_price_min_date']])
         else:
-            # Mostramos el primer registro tal cual llega
-            st.write("Datos brutos recibidos:")
-            st.json(data[0]) 
+            st.warning("La API respondió, pero no hay ventas registradas (precio 0) para este ítem en ninguna ciudad ahora mismo.")
             
     except Exception as e:
-        st.error(f"Error técnico: {e}")
+        st.error(f"Error al procesar los datos: {e}")
