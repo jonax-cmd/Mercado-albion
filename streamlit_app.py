@@ -1,13 +1,13 @@
 """
-streamlit_app.py — Albion Online Price Tracker
-Todo en un solo archivo. Ejecutar: streamlit run streamlit_app.py
+streamlit_app.py — Albion Online Mercado de Precios
+Búsqueda en español, menú por categoría, precios jerarquizados.
 """
 
 import streamlit as st
 import requests
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
+import plotly.express as px
 from datetime import datetime
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -23,19 +23,72 @@ CITIES = [
 ]
 
 QUALITY_MAP = {
-    "Normal (Q1)":      1,
-    "Good (Q2)":        2,
-    "Outstanding (Q3)": 3,
-    "Excellent (Q4)":   4,
-    "Masterpiece (Q5)": 5,
+    "Normal":      1,
+    "Buena":       2,
+    "Sobresaliente": 3,
+    "Excelente":   4,
+    "Obra Maestra": 5,
 }
 
-QUALITY_LABEL = {v: k for k, v in QUALITY_MAP.items()}
+# Categorías en español con sus palabras clave en inglés para buscar
+CATEGORIAS = {
+    "⚔️  Armas": {
+        "🗡️  Espadas":         "Sword",
+        "🪓  Hachas":          "Axe",
+        "🔨  Martillos":       "Hammer",
+        "🏹  Arcos":           "Bow",
+        "🔥  Bastones de fuego":"Fire Staff",
+        "❄️  Bastones de hielo":"Ice Staff",
+        "💀  Bastones de maldición": "Curse Staff",
+        "✨  Bastones de sagrado": "Holy Staff",
+        "🌿  Bastones de naturaleza": "Nature Staff",
+        "🗡️  Dagas":           "Dagger",
+        "🛡️  Lanzas":          "Spear",
+        "🪄  Bastones de arcano": "Arcane Staff",
+        "👊  Puños":           "Knuckles",
+        "⚔️  Espadas cruzadas": "Crossbow",
+    },
+    "🛡️  Armaduras": {
+        "🧥  Armadura de tela": "Cloth",
+        "🥋  Armadura de cuero": "Leather",
+        "⚙️  Armadura de placa": "Plate",
+    },
+    "🧪  Recursos": {
+        "🪨  Mineral":         "Ore",
+        "🪵  Madera":          "Wood",
+        "🐄  Cuero crudo":     "Hide",
+        "🌾  Fibra":           "Fiber",
+        "🪨  Piedra":          "Rock",
+    },
+    "💊  Consumibles": {
+        "🍖  Comida":          "Food",
+        "⚗️  Pociones":        "Potion",
+    },
+    "🎒  Accesorios": {
+        "💍  Anillos":         "Ring",
+        "📿  Amuletos":        "Amulet",
+        "🧤  Capas":           "Cape",
+        "👜  Bolsas":          "Bag",
+    },
+    "🏗️  Materiales": {
+        "🔩  Barras de metal":  "Metal Bar",
+        "📋  Tablas":          "Plank",
+        "🧵  Tela elaborada":  "Cloth",
+        "📦  Materiales de construcción": "Building Material",
+    },
+    "🔍  Buscar por nombre": {}
+}
+
+TIERS = {
+    "T1": "T1", "T2": "T2", "T3": "T3", "T4": "T4",
+    "T5": "T5", "T6": "T6", "T7": "T7", "T8": "T8",
+}
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FUNCIONES DE API
+# FUNCIONES API
 # ══════════════════════════════════════════════════════════════════════════════
 
+@st.cache_data(ttl=60)
 def search_items(query: str) -> list:
     try:
         resp = requests.get(SEARCH_URL, params={"q": query}, timeout=10)
@@ -43,17 +96,19 @@ def search_items(query: str) -> list:
         data = resp.json()
         items = []
         for item in data.get("items", []):
+            name = item.get("localizedNames", {}).get("ES", "") or \
+                   item.get("localizedNames", {}).get("EN-US", item.get("uniqueName", ""))
             items.append({
                 "id":   item.get("uniqueName", ""),
-                "name": item.get("localizedNames", {}).get("EN-US", item.get("uniqueName", "")),
+                "name": name,
             })
         return items
-    except Exception as e:
-        st.error(f"Error buscando items: {e}")
+    except Exception:
         return []
 
 
-def get_prices(item_id: str, qualities: list) -> pd.DataFrame:
+@st.cache_data(ttl=60)
+def get_prices(item_id: str, qualities: tuple) -> pd.DataFrame:
     url = f"{BASE_URL}/stats/prices/{item_id}"
     params = {
         "locations": ",".join(CITIES),
@@ -67,28 +122,27 @@ def get_prices(item_id: str, qualities: list) -> pd.DataFrame:
             return pd.DataFrame()
         rows = []
         for entry in data:
+            q_num = entry.get("quality", 1)
+            q_label = {1:"Normal",2:"Buena",3:"Sobresaliente",4:"Excelente",5:"Obra Maestra"}.get(q_num, "Normal")
             rows.append({
                 "Ciudad":        entry.get("city", "—"),
-                "Calidad":       QUALITY_LABEL.get(entry.get("quality", 1), "Normal"),
+                "Calidad":       q_label,
                 "Precio Venta":  entry.get("sell_price_min", 0),
                 "Fecha Venta":   _parse_date(entry.get("sell_price_min_date")),
                 "Precio Compra": entry.get("buy_price_max", 0),
                 "Fecha Compra":  _parse_date(entry.get("buy_price_max_date")),
             })
         df = pd.DataFrame(rows)
-        return df[df["Ciudad"].isin(CITIES)]
+        return df[df["Ciudad"].isin(CITIES)].reset_index(drop=True)
     except Exception as e:
-        st.error(f"Error cargando precios: {e}")
+        st.error(f"Error: {e}")
         return pd.DataFrame()
 
 
-def get_history(item_id: str, city: str, quality: int = 1, time_scale: int = 1) -> pd.DataFrame:
+@st.cache_data(ttl=60)
+def get_history(item_id: str, city: str, quality: int, time_scale: int) -> pd.DataFrame:
     url = f"{BASE_URL}/stats/history/{item_id}"
-    params = {
-        "locations":  city,
-        "qualities":  quality,
-        "time-scale": time_scale,
-    }
+    params = {"locations": city, "qualities": quality, "time-scale": time_scale}
     try:
         resp = requests.get(url, params=params, timeout=15)
         resp.raise_for_status()
@@ -104,66 +158,35 @@ def get_history(item_id: str, city: str, quality: int = 1, time_scale: int = 1) 
                     "Volumen":     point.get("item_count", 0),
                 })
         df = pd.DataFrame(rows)
-        return df.sort_values("Hora") if not df.empty else df
-    except Exception as e:
-        st.error(f"Error cargando historial: {e}")
+        return df.sort_values("Hora").reset_index(drop=True) if not df.empty else df
+    except Exception:
         return pd.DataFrame()
 
 # ══════════════════════════════════════════════════════════════════════════════
-# FUNCIONES DE UTILIDAD
+# UTILIDADES
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _parse_date(date_str: str) -> str:
+def _parse_date(date_str):
     if not date_str:
         return "—"
     try:
         dt = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
-        return dt.strftime("%Y-%m-%d %H:%M")
+        return dt.strftime("%d/%m %H:%M")
     except Exception:
-        return date_str
-
-
-def format_silver(value) -> str:
-    if not value or value == 0:
         return "—"
-    return f"{int(value):,} 🪙"
 
 
-def highlight_best_prices(df: pd.DataFrame):
-    def color_min_sell(col):
-        styles = [""] * len(col)
-        valid = col[col > 0]
-        if valid.empty:
-            return styles
-        min_val = valid.min()
-        for i, v in enumerate(col):
-            if v == min_val and v > 0:
-                styles[i] = "background-color: #1a472a; color: #a3ffb0; font-weight: bold"
-        return styles
-
-    def color_max_buy(col):
-        styles = [""] * len(col)
-        valid = col[col > 0]
-        if valid.empty:
-            return styles
-        max_val = valid.max()
-        for i, v in enumerate(col):
-            if v == max_val and v > 0:
-                styles[i] = "background-color: #1a2a47; color: #90c8ff; font-weight: bold"
-        return styles
-
-    return (
-        df.style
-        .apply(color_min_sell, subset=["Precio Venta"])
-        .apply(color_max_buy,  subset=["Precio Compra"])
-        .format({
-            "Precio Venta":  lambda x: format_silver(x),
-            "Precio Compra": lambda x: format_silver(x),
-        })
-    )
+def fmt(value) -> str:
+    if not value or value == 0:
+        return "Sin datos"
+    return f"{int(value):,}"
 
 
-def get_arbitrage(df: pd.DataFrame) -> pd.DataFrame:
+def medal(rank: int) -> str:
+    return {1: "🥇", 2: "🥈", 3: "🥉"}.get(rank, f"#{rank}")
+
+
+def get_arbitrage(df):
     if df.empty:
         return pd.DataFrame()
     rows = []
@@ -184,16 +207,14 @@ def get_arbitrage(df: pd.DataFrame) -> pd.DataFrame:
                 "Precio Venta": b["Precio Compra"],
                 "Ganancia":     ganancia,
                 "Ganancia %":   round(pct, 1),
-                "Calidad":      s["Calidad"],
             })
     if not rows:
         return pd.DataFrame()
     return (
         pd.DataFrame(rows)
         .sort_values("Ganancia", ascending=False)
-        .drop_duplicates(subset=["Comprar en", "Vender en", "Calidad"])
-        .head(10)
-        .reset_index(drop=True)
+        .drop_duplicates(subset=["Comprar en","Vender en"])
+        .head(8).reset_index(drop=True)
     )
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -201,7 +222,7 @@ def get_arbitrage(df: pd.DataFrame) -> pd.DataFrame:
 # ══════════════════════════════════════════════════════════════════════════════
 
 st.set_page_config(
-    page_title="Albion Price Tracker",
+    page_title="Mercado Albion",
     page_icon="⚔️",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -209,66 +230,144 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-    .stApp { background-color: #0f0f1a; color: #e8d9b0; }
-    .stSidebar { background-color: #1a1a2e; }
+    @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Crimson+Text:ital,wght@0,400;0,600;1,400&display=swap');
+
+    .stApp { background-color: #0d0c0a; color: #d4b483; }
+    .stSidebar { background: linear-gradient(180deg, #1a1208 0%, #0d0c0a 100%); border-right: 1px solid #5a3e1b; }
+
+    h1 { font-family: 'Cinzel', serif !important; color: #c9a227 !important; text-align: center; letter-spacing: 3px; }
+    h2, h3 { font-family: 'Cinzel', serif !important; color: #c9a227 !important; }
+
+    /* Tarjetas métricas */
     [data-testid="metric-container"] {
-        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-        border: 1px solid #c9a227;
-        border-radius: 8px;
-        padding: 12px;
+        background: linear-gradient(135deg, #1e1508 0%, #2a1d0a 100%);
+        border: 1px solid #5a3e1b;
+        border-top: 2px solid #c9a227;
+        border-radius: 4px;
+        padding: 16px;
     }
-    [data-testid="metric-container"] label { color: #c9a227 !important; }
-    [data-testid="metric-container"] [data-testid="stMetricValue"] {
-        color: #ffd700 !important; font-size: 1.4rem !important;
+    [data-testid="metric-container"] label { color: #8a7355 !important; font-size: 0.75rem !important; text-transform: uppercase; letter-spacing: 1px; }
+    [data-testid="metric-container"] [data-testid="stMetricValue"] { color: #ffd700 !important; font-family: 'Cinzel', serif !important; font-size: 1.3rem !important; }
+
+    /* Jerarquía de precios */
+    .precio-card {
+        background: linear-gradient(135deg, #1a1208, #231a0b);
+        border: 1px solid #3d2b0f;
+        border-radius: 6px;
+        padding: 12px 16px;
+        margin: 6px 0;
+        display: flex;
+        align-items: center;
+        gap: 12px;
     }
-    h1, h2, h3 { color: #c9a227 !important; font-family: Georgia, serif; }
+    .precio-1 { border-left: 4px solid #ffd700; }
+    .precio-2 { border-left: 4px solid #c0c0c0; }
+    .precio-3 { border-left: 4px solid #cd7f32; }
+    .precio-n { border-left: 4px solid #3d2b0f; }
+
+    .ciudad-nombre { font-family: 'Cinzel', serif; font-size: 0.9rem; color: #c9a227; min-width: 130px; }
+    .precio-valor { font-size: 1.1rem; font-weight: bold; color: #ffd700; }
+    .precio-valor-gris { font-size: 1.1rem; color: #5a4a35; }
+    .fecha-txt { font-size: 0.7rem; color: #5a4a35; margin-left: auto; }
+
+    .seccion-titulo {
+        font-family: 'Cinzel', serif;
+        color: #c9a227;
+        font-size: 1rem;
+        text-transform: uppercase;
+        letter-spacing: 2px;
+        border-bottom: 1px solid #3d2b0f;
+        padding-bottom: 8px;
+        margin: 20px 0 12px 0;
+    }
+
+    /* Tabs */
+    .stTabs [data-baseweb="tab-list"] { background: #1a1208; border-bottom: 1px solid #5a3e1b; }
+    .stTabs [data-baseweb="tab"] { color: #8a7355; font-family: 'Cinzel', serif; }
+    .stTabs [aria-selected="true"] { color: #c9a227 !important; border-bottom: 2px solid #c9a227 !important; }
+
+    /* Botones */
     .stButton > button {
         background: linear-gradient(135deg, #c9a227, #8b6914);
-        color: #0f0f1a; font-weight: bold; border: none; border-radius: 6px;
+        color: #0d0c0a; font-weight: bold; border: none;
+        border-radius: 4px; font-family: 'Cinzel', serif;
+        text-transform: uppercase; letter-spacing: 1px;
     }
-    .stButton > button:hover { background: #ffd700; }
-    hr { border-color: #c9a227; opacity: 0.3; }
+
+    /* Selectbox */
+    .stSelectbox label, .stMultiSelect label { color: #8a7355 !important; font-size: 0.8rem !important; text-transform: uppercase; letter-spacing: 1px; }
+
+    hr { border-color: #3d2b0f; opacity: 0.6; }
+
+    /* Ocultar footer */
+    footer { visibility: hidden; }
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("# ⚔️ Albion Online — Price Tracker")
-st.markdown("Compara precios de compra/venta en todas las ciudades y detecta arbitraje.")
-st.divider()
-
 # ══════════════════════════════════════════════════════════════════════════════
-# SIDEBAR
+# SIDEBAR — MENÚ ESTILO ALBION
 # ══════════════════════════════════════════════════════════════════════════════
 
 with st.sidebar:
-    st.markdown("## 🔍 Buscar Item")
-    query = st.text_input("Nombre del item", placeholder="ej: T4 Sword, Bag, Ore...")
+    st.markdown("## ⚔️ Mercado")
+    st.divider()
 
-    item_id, item_name = None, None
+    categoria = st.selectbox("📂 Categoría", list(CATEGORIAS.keys()))
 
-    if query:
-        with st.spinner("Buscando..."):
-            results = search_items(query)
+    item_id   = None
+    item_name = "—"
+
+    if categoria == "🔍  Buscar por nombre":
+        # Búsqueda libre
+        query = st.text_input("🔍 Buscar item", placeholder="ej: espada, arco, bolsa...")
+        if query:
+            with st.spinner("Buscando..."):
+                results = search_items(query)
+            if results:
+                options = {r["name"]: r["id"] for r in results[:25]}
+                sel = st.selectbox("Resultados", list(options.keys()))
+                item_id   = options[sel]
+                item_name = sel
+            else:
+                st.warning("Sin resultados. Intenta en inglés.")
+    else:
+        # Menú por subcategoría
+        subcats = CATEGORIAS[categoria]
+        subcat = st.selectbox("📁 Tipo", list(subcats.keys()))
+        keyword = subcats[subcat]
+
+        tier = st.selectbox("⚙️ Tier", ["T4", "T5", "T6", "T7", "T8", "T3", "T2", "T1"])
+
+        query_auto = f"{tier} {keyword}"
+        with st.spinner(f"Cargando {tier} {subcat}..."):
+            results = search_items(query_auto)
+
         if results:
-            options = {r["name"]: r["id"] for r in results[:20]}
-            selected_name = st.selectbox("Resultados", list(options.keys()))
-            item_id   = options[selected_name]
-            item_name = selected_name
+            options = {r["name"]: r["id"] for r in results[:25]}
+            sel = st.selectbox("📦 Item", list(options.keys()))
+            item_id   = options[sel]
+            item_name = sel
         else:
-            st.warning("No se encontraron items.")
+            st.info("Sin resultados para este tier. Prueba otro.")
 
     st.divider()
-    st.markdown("## ⚙️ Calidades")
-    selected_qualities = st.multiselect(
-        "Filtrar por calidad",
+
+    # Calidades
+    st.markdown("**✨ Calidades**")
+    selected_quals = st.multiselect(
+        "Filtrar",
         list(QUALITY_MAP.keys()),
-        default=["Normal (Q1)", "Good (Q2)"],
+        default=["Normal", "Buena"],
+        label_visibility="collapsed",
     )
-    qualities = [QUALITY_MAP[q] for q in selected_qualities] or [1]
+    qualities = tuple(QUALITY_MAP[q] for q in selected_quals) if selected_quals else (1,)
 
     st.divider()
-    st.markdown("## 📈 Historial")
-    hist_city    = st.selectbox("Ciudad", CITIES)
-    hist_quality = st.selectbox("Calidad", list(QUALITY_MAP.keys()), index=0)
+
+    # Historial config
+    st.markdown("**📈 Historial**")
+    hist_city    = st.selectbox("Ciudad", CITIES, label_visibility="collapsed")
+    hist_quality = st.selectbox("Calidad", list(QUALITY_MAP.keys()), label_visibility="collapsed")
     hist_scale   = st.radio("Escala", ["Por hora", "Por día"], horizontal=True)
     time_scale   = 1 if hist_scale == "Por hora" else 24
 
@@ -276,149 +375,154 @@ with st.sidebar:
 # CONTENIDO PRINCIPAL
 # ══════════════════════════════════════════════════════════════════════════════
 
+st.markdown("# ⚔️ MERCADO DE ALBION")
+
 if not item_id:
-    st.info("👈 Busca un item en el panel izquierdo para comenzar.")
+    st.markdown("""
+    <div style='text-align:center; padding: 60px 0; color: #5a4a35;'>
+        <div style='font-size: 3rem;'>⚔️</div>
+        <div style='font-family: Cinzel, serif; font-size: 1.2rem; margin-top: 16px;'>
+            Selecciona una categoría y un item para ver los precios
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
     st.stop()
 
-with st.spinner(f"Cargando precios de **{item_name}**..."):
+with st.spinner(f"Consultando precios de {item_name}..."):
     df_prices = get_prices(item_id, qualities)
 
 if df_prices.empty:
-    st.error("No hay datos de precios. Prueba otra calidad o item.")
+    st.error("No hay datos de precios. Prueba otra calidad o tier.")
     st.stop()
 
-tab1, tab2, tab3 = st.tabs(["📊 Precios por Ciudad", "📈 Flujo por Hora", "💰 Arbitraje"])
+tab1, tab2, tab3 = st.tabs(["📊  Precios por Ciudad", "📈  Flujo por Hora", "💰  Arbitraje"])
 
-# ── TAB 1: Precios ────────────────────────────────────────────────────────────
+# ════════════════════════════════════════════════════════════════════════════
+# TAB 1 — JERARQUÍA DE PRECIOS
+# ════════════════════════════════════════════════════════════════════════════
+
 with tab1:
     st.markdown(f"### {item_name}")
 
-    valid_sells = df_prices[df_prices["Precio Venta"] > 0]["Precio Venta"]
-    valid_buys  = df_prices[df_prices["Precio Compra"] > 0]["Precio Compra"]
+    # ── Métricas ──
+    v_sells = df_prices[df_prices["Precio Venta"] > 0]["Precio Venta"]
+    v_buys  = df_prices[df_prices["Precio Compra"] > 0]["Precio Compra"]
 
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        if not valid_sells.empty:
-            min_sell = valid_sells.min()
-            city_min = df_prices[df_prices["Precio Venta"] == min_sell]["Ciudad"].iloc[0]
-            st.metric("🟢 Venta más barata", format_silver(min_sell), city_min)
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        if not v_sells.empty:
+            ms = v_sells.min()
+            ci = df_prices[df_prices["Precio Venta"] == ms]["Ciudad"].iloc[0]
+            st.metric("🟢 Venta más barata", fmt(ms), ci)
         else:
             st.metric("🟢 Venta más barata", "—")
-    with col2:
-        if not valid_buys.empty:
-            max_buy = valid_buys.max()
-            city_max = df_prices[df_prices["Precio Compra"] == max_buy]["Ciudad"].iloc[0]
-            st.metric("🔵 Compra más alta", format_silver(max_buy), city_max)
+    with c2:
+        if not v_buys.empty:
+            mb = v_buys.max()
+            ci = df_prices[df_prices["Precio Compra"] == mb]["Ciudad"].iloc[0]
+            st.metric("🔵 Compra más alta", fmt(mb), ci)
         else:
             st.metric("🔵 Compra más alta", "—")
-    with col3:
-        if not valid_sells.empty:
-            st.metric("📉 Venta promedio", format_silver(int(valid_sells.mean())))
-        else:
-            st.metric("📉 Venta promedio", "—")
-    with col4:
-        if not valid_sells.empty and not valid_buys.empty:
-            st.metric("💹 Spread máx.", format_silver(valid_buys.max() - valid_sells.min()))
-        else:
-            st.metric("💹 Spread máx.", "—")
+    with c3:
+        if not v_sells.empty:
+            st.metric("📊 Promedio venta", fmt(int(v_sells.mean())))
+    with c4:
+        if not v_sells.empty and not v_buys.empty:
+            st.metric("💹 Spread", fmt(v_buys.max() - v_sells.min()))
 
     st.divider()
-    st.markdown("#### Tabla de precios")
-    st.dataframe(
-        highlight_best_prices(
-            df_prices[["Ciudad","Calidad","Precio Venta","Fecha Venta","Precio Compra","Fecha Compra"]].copy()
-        ),
-        use_container_width=True,
-        hide_index=True,
-    )
-    st.caption("🟢 Verde = venta más barata | 🔵 Azul = compra más alta")
 
-    st.divider()
-    df_chart = df_prices[(df_prices["Precio Venta"] > 0) | (df_prices["Precio Compra"] > 0)].copy()
-    if not df_chart.empty:
-        fig = go.Figure()
-        fig.add_trace(go.Bar(name="Precio Venta", x=df_chart["Ciudad"], y=df_chart["Precio Venta"], marker_color="#e05c5c"))
-        fig.add_trace(go.Bar(name="Precio Compra", x=df_chart["Ciudad"], y=df_chart["Precio Compra"], marker_color="#5c9ee0"))
-        fig.update_layout(
-            barmode="group", paper_bgcolor="#0f0f1a", plot_bgcolor="#1a1a2e",
-            font=dict(color="#e8d9b0"), legend=dict(bgcolor="#1a1a2e", bordercolor="#c9a227"),
-            xaxis=dict(gridcolor="#2a2a4a"), yaxis=dict(gridcolor="#2a2a4a", title="Silver"),
-            height=400, margin=dict(t=20, b=40),
-        )
-        st.plotly_chart(fig, use_container_width=True)
+    col_venta, col_compra = st.columns(2)
 
-# ── TAB 2: Historial / Flujo ──────────────────────────────────────────────────
+    # ── Órdenes de VENTA (de menor a mayor = mejor para comprar) ──
+    with col_venta:
+        st.markdown('<div class="seccion-titulo">🔴 Órdenes de Venta — De menor a mayor</div>', unsafe_allow_html=True)
+        st.caption("Precio al que los vendedores ofrecen el item")
+
+        df_venta = df_prices[df_prices["Precio Venta"] > 0][["Ciudad","Precio Venta","Fecha Venta","Calidad"]].copy()
+        df_venta = df_venta.sort_values("Precio Venta").reset_index(drop=True)
+
+        if df_venta.empty:
+            st.info("Sin órdenes de venta activas.")
+        else:
+            for i, row in df_venta.iterrows():
+                rank = i + 1
+                med  = medal(rank) if rank <= 3 else f"#{rank}"
+                cls  = f"precio-{rank}" if rank <= 3 else "precio-n"
+                st.markdown(f"""
+                <div class="precio-card {cls}">
+                    <span style="font-size:1.2rem">{med}</span>
+                    <span class="ciudad-nombre">{row['Ciudad']}</span>
+                    <span class="precio-valor">{fmt(row['Precio Venta'])} 🪙</span>
+                    <span style="font-size:0.7rem;color:#5a4a35;margin-left:8px">{row['Calidad']}</span>
+                    <span class="fecha-txt">🕐 {row['Fecha Venta']}</span>
+                </div>
+                """, unsafe_allow_html=True)
+
+            # Mini gráfico barras
+            fig_v = px.bar(df_venta, x="Ciudad", y="Precio Venta",
+                color="Precio Venta", color_continuous_scale=["#2d1a0a","#c9a227","#ffd700"],
+                text=df_venta["Precio Venta"].apply(fmt))
+            fig_v.update_traces(textposition="outside")
+            fig_v.update_layout(
+                paper_bgcolor="#0d0c0a", plot_bgcolor="#1a1208",
+                font=dict(color="#d4b483"), showlegend=False,
+                coloraxis_showscale=False,
+                xaxis=dict(gridcolor="#2a1d0a", tickangle=-30),
+                yaxis=dict(gridcolor="#2a1d0a", title="Silver"),
+                margin=dict(t=30,b=10), height=280,
+            )
+            st.plotly_chart(fig_v, use_container_width=True)
+
+    # ── Órdenes de COMPRA (de mayor a menor = mejor para vender) ──
+    with col_compra:
+        st.markdown('<div class="seccion-titulo">🔵 Órdenes de Compra — De mayor a menor</div>', unsafe_allow_html=True)
+        st.caption("Precio al que los compradores quieren pagar")
+
+        df_compra = df_prices[df_prices["Precio Compra"] > 0][["Ciudad","Precio Compra","Fecha Compra","Calidad"]].copy()
+        df_compra = df_compra.sort_values("Precio Compra", ascending=False).reset_index(drop=True)
+
+        if df_compra.empty:
+            st.info("Sin órdenes de compra activas.")
+        else:
+            for i, row in df_compra.iterrows():
+                rank = i + 1
+                med  = medal(rank) if rank <= 3 else f"#{rank}"
+                cls  = f"precio-{rank}" if rank <= 3 else "precio-n"
+                st.markdown(f"""
+                <div class="precio-card {cls}">
+                    <span style="font-size:1.2rem">{med}</span>
+                    <span class="ciudad-nombre">{row['Ciudad']}</span>
+                    <span class="precio-valor">{fmt(row['Precio Compra'])} 🪙</span>
+                    <span style="font-size:0.7rem;color:#5a4a35;margin-left:8px">{row['Calidad']}</span>
+                    <span class="fecha-txt">🕐 {row['Fecha Compra']}</span>
+                </div>
+                """, unsafe_allow_html=True)
+
+            fig_c = px.bar(df_compra, x="Ciudad", y="Precio Compra",
+                color="Precio Compra", color_continuous_scale=["#0a1a2d","#2775c9","#5c9ee0"],
+                text=df_compra["Precio Compra"].apply(fmt))
+            fig_c.update_traces(textposition="outside")
+            fig_c.update_layout(
+                paper_bgcolor="#0d0c0a", plot_bgcolor="#1a1208",
+                font=dict(color="#d4b483"), showlegend=False,
+                coloraxis_showscale=False,
+                xaxis=dict(gridcolor="#2a1d0a", tickangle=-30),
+                yaxis=dict(gridcolor="#2a1d0a", title="Silver"),
+                margin=dict(t=30,b=10), height=280,
+            )
+            st.plotly_chart(fig_c, use_container_width=True)
+
+# ════════════════════════════════════════════════════════════════════════════
+# TAB 2 — FLUJO POR HORA
+# ════════════════════════════════════════════════════════════════════════════
+
 with tab2:
-    st.markdown(f"### 📈 {hist_city} — {hist_quality}")
+    st.markdown(f"### 📈 Historial en {hist_city}")
+
     with st.spinner("Cargando historial..."):
-        df_hist = get_history(item_id, hist_city, quality=QUALITY_MAP[hist_quality], time_scale=time_scale)
+        df_hist = get_history(item_id, hist_city, QUALITY_MAP[hist_quality], time_scale)
 
     if df_hist.empty:
-        st.warning("No hay datos históricos para esta ciudad/calidad.")
-    else:
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Precio promedio", format_silver(int(df_hist["Precio Prom"].mean())))
-        with col2:
-            st.metric("Volumen total", f"{df_hist['Volumen'].sum():,} unidades")
-        with col3:
-            peak = df_hist.loc[df_hist["Volumen"].idxmax(), "Hora"]
-            st.metric("Hora pico", str(peak))
-
-        st.divider()
-
-        fig_price = px.line(df_hist, x="Hora", y="Precio Prom",
-            title="Precio promedio en el tiempo", color_discrete_sequence=["#c9a227"], markers=True)
-        fig_price.update_layout(paper_bgcolor="#0f0f1a", plot_bgcolor="#1a1a2e",
-            font=dict(color="#e8d9b0"), xaxis=dict(gridcolor="#2a2a4a"),
-            yaxis=dict(gridcolor="#2a2a4a", title="Silver"), height=350)
-        st.plotly_chart(fig_price, use_container_width=True)
-
-        fig_vol = px.bar(df_hist, x="Hora", y="Volumen",
-            title=f"Flujo de transacciones ({hist_scale.lower()})",
-            color_discrete_sequence=["#5c9ee0"])
-        fig_vol.update_layout(paper_bgcolor="#0f0f1a", plot_bgcolor="#1a1a2e",
-            font=dict(color="#e8d9b0"), xaxis=dict(gridcolor="#2a2a4a"),
-            yaxis=dict(gridcolor="#2a2a4a", title="Unidades"), height=350)
-        st.plotly_chart(fig_vol, use_container_width=True)
-
-        with st.expander("Ver datos crudos"):
-            df_show = df_hist.copy()
-            df_show["Precio Prom"] = df_show["Precio Prom"].apply(format_silver)
-            st.dataframe(df_show, use_container_width=True, hide_index=True)
-
-# ── TAB 3: Arbitraje ──────────────────────────────────────────────────────────
-with tab3:
-    st.markdown("### 💰 Oportunidades de Arbitraje")
-    st.markdown("Compra barato en una ciudad → vende caro en otra.")
-    df_arb = get_arbitrage(df_prices)
-
-    if df_arb.empty:
-        st.info("No se detectaron oportunidades de arbitraje con los filtros actuales.")
-    else:
-        top = df_arb.iloc[0]
-        st.success(
-            f"🏆 **Mejor ruta:** Compra en **{top['Comprar en']}** por `{format_silver(top['Precio'])}` "
-            f"→ Vende en **{top['Vender en']}** por `{format_silver(top['Precio Venta'])}` "
-            f"= **+{format_silver(top['Ganancia'])}** ({top['Ganancia %']}%)"
-        )
-        st.divider()
-
-        df_show = df_arb.copy()
-        df_show["Precio"]       = df_show["Precio"].apply(format_silver)
-        df_show["Precio Venta"] = df_show["Precio Venta"].apply(format_silver)
-        df_show["Ganancia"]     = df_show["Ganancia"].apply(format_silver)
-        df_show["Ganancia %"]   = df_show["Ganancia %"].apply(lambda x: f"{x}%")
-        st.dataframe(df_show, use_container_width=True, hide_index=True)
-
-        fig_arb = px.bar(df_arb, x="Ganancia",
-            y=df_arb["Comprar en"] + " → " + df_arb["Vender en"],
-            orientation="h", color="Ganancia %", color_continuous_scale="YlOrRd",
-            title="Ganancia por ruta de arbitraje")
-        fig_arb.update_layout(paper_bgcolor="#0f0f1a", plot_bgcolor="#1a1a2e",
-            font=dict(color="#e8d9b0"), xaxis=dict(gridcolor="#2a2a4a", title="Ganancia (Silver)"),
-            yaxis=dict(gridcolor="#2a2a4a"), height=400)
-        st.plotly_chart(fig_arb, use_container_width=True)
-
-st.divider()
-st.caption("Datos: [Albion Online Data Project](https://www.albion-online-data.com/) · Actualizado por la comunidad")
+        st.warning("Sin datos históricos para esta ciudad y calidad.")
+   
