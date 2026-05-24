@@ -6,37 +6,55 @@ st.set_page_config(page_title="Albion Precios Live", layout="wide")
 st.title("⚔️ Albion Precios Live")
 
 BASE_URL = "https://west.albion-online-data.com/api/v2"
-
-ITEMS_PRUEBA = {
-    "T5_FIBER": "Fibra T5",
-    "T5_WOOD": "Madera T5",
-    "T5_HIDE": "Piel T5",
-    "T5_ORE": "Mineral T5",
-    "T5_PLANK": "Tabla T5",
-    "T4_PLATE_HELMET": "Casco de Placa T4",
-    "T4_MOUNT_HORSE": "Caballo de Montar T4",
-    "T5_BAG": "Bolsa T5"
-}
+SEARCH_URL = "https://gameinfo.albiononline.com/api/gameinfo/search"
 
 ALL_CITIES = ["Caerleon", "Bridgewatch", "Lymhurst", "Thetford", "Fort Sterling", "Martlock", "Brecilien"]
 
+# ====================== SIDEBAR ======================
 with st.sidebar:
-    st.header("Configuración")
-    item_key = st.selectbox("Selecciona Item", 
-                           options=list(ITEMS_PRUEBA.keys()), 
-                           format_func=lambda x: f"{x} → {ITEMS_PRUEBA[x]}")
+    st.header("🔍 Buscar Item")
     
-    quality_options = st.multiselect("Calidades", 
-                                    options=["Normal", "Buena", "Sobresaliente", "Excelente"],
+    search_query = st.text_input("Nombre del item", placeholder="Ej: Fibra, Caballo, Espada, Bag, Plate...")
+
+    item_id = None
+    item_name = ""
+
+    if search_query:
+        with st.spinner("Buscando..."):
+            try:
+                resp = requests.get(SEARCH_URL, params={"q": search_query, "limit": 25}, timeout=8)
+                if resp.status_code == 200:
+                    results = []
+                    for item in resp.json().get("items", []):
+                        name_es = item.get("localizedNames", {}).get("ES", "")
+                        name_en = item.get("localizedNames", {}).get("EN-US", "")
+                        final_name = name_es if name_es else name_en
+                        if final_name:
+                            results.append({"id": item["uniqueName"], "name": final_name})
+                    
+                    if results:
+                        selected = st.selectbox("Resultados", [r["name"] for r in results])
+                        item_id = next(r["id"] for r in results if r["name"] == selected)
+                        item_name = selected
+                    else:
+                        st.warning("No se encontraron resultados")
+            except:
+                st.error("Error en la búsqueda")
+
+    st.divider()
+    st.subheader("Filtros")
+    tier = st.selectbox("Tier", ["T4","T5","T6","T7","T8"], index=1)
+    quality_options = st.multiselect("Calidad", 
+                                    ["Normal", "Buena", "Sobresaliente", "Excelente"], 
                                     default=["Normal", "Buena"])
 
-# Mapeo de calidades
-quality_map = {"Normal": 1, "Buena": 2, "Sobresaliente": 3, "Excelente": 4}
-selected_qualities = [quality_map[q] for q in quality_options]
+    quality_map = {"Normal":1, "Buena":2, "Sobresaliente":3, "Excelente":4}
+    selected_qualities = [quality_map[q] for q in quality_options]
 
-if st.button("🔄 Actualizar Precios", type="primary"):
-    with st.spinner(f"Consultando {ITEMS_PRUEBA[item_key]}..."):
-        url = f"{BASE_URL}/stats/prices/{item_key}"
+# ====================== CONTENIDO PRINCIPAL ======================
+if item_id and st.button("🔄 Actualizar Precios", type="primary"):
+    with st.spinner(f"Consultando {item_name}..."):
+        url = f"{BASE_URL}/stats/prices/{item_id}"
         params = {
             "locations": ",".join(ALL_CITIES),
             "qualities": ",".join(map(str, selected_qualities))
@@ -48,43 +66,32 @@ if st.button("🔄 Actualizar Precios", type="primary"):
             df = pd.DataFrame(response.json())
             
             if not df.empty:
-                # Limpiar datos
                 df_clean = df[['city', 'quality', 'sell_price_min', 'buy_price_max']].copy()
-                df_clean = df_clean.rename(columns={
-                    'city': 'Ciudad',
-                    'quality': 'Calidad',
-                    'sell_price_min': 'Precio Venta',
-                    'buy_price_max': 'Precio Compra'
-                })
+                df_clean.columns = ['Ciudad', 'Calidad', 'Precio Venta', 'Precio Compra']
                 
-                st.subheader(f"📦 {ITEMS_PRUEBA[item_key]}")
+                st.success(f"✅ {item_name} ({item_id})")
                 
                 # Mostrar por calidad
-                for q_num in sorted(df_clean['Calidad'].unique()):
-                    q_name = {1:"Normal", 2:"Buena", 3:"Sobresaliente", 4:"Excelente"}.get(q_num, f"Calidad {q_num}")
-                    df_q = df_clean[df_clean['Calidad'] == q_num].copy()
+                for q in sorted(df_clean['Calidad'].unique()):
+                    q_name = {1:"Normal", 2:"Buena", 3:"Sobresaliente", 4:"Excelente"}.get(q, f"Calidad {q}")
+                    df_q = df_clean[df_clean['Calidad'] == q].copy()
                     
                     if df_q.empty:
                         continue
-                    
-                    st.markdown(f"**{q_name}**")
+                        
+                    st.markdown(f"### {q_name}")
                     
                     # Ordenar de menor a mayor precio de venta
                     df_q = df_q.sort_values(by='Precio Venta', ascending=True)
                     
-                    # Resaltar fila con precio más bajo
-                    def highlight_lowest(s):
-                        is_lowest = s == s.min()
-                        return ['background-color: #2a4a2a' if v else '' for v in is_lowest]
-                    
-                    st.dataframe(df_q[['Ciudad', 'Precio Venta', 'Precio Compra']], 
-                               use_container_width=True, 
-                               hide_index=True)
-                    
+                    st.dataframe(df_q, use_container_width=True, hide_index=True)
                     st.divider()
             else:
-                st.warning("No hay datos disponibles para este item en este momento.")
+                st.warning("No hay órdenes activas para este item en este momento.")
         else:
-            st.error(f"Error al conectar con la API ({response.status_code})")
+            st.error(f"Error al consultar la API ({response.status_code})")
 
-st.caption("Precios ordenados de menor a mayor • Datos en tiempo real de Albion Online")
+else:
+    st.info("Busca un item en la barra lateral y presiona 'Actualizar Precios'")
+
+st.caption("Datos en tiempo real • Albion Online Data Project")
