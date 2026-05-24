@@ -40,11 +40,21 @@ st.caption("Filtros avanzados con historial y calculadora financiera sin límite
 # --- SECCIÓN 1: FILTROS ESTILO ALBION ---
 st.subheader("🗂️ Filtros de Búsqueda")
 
-item_input = st.text_input("Buscar ítem en español (Ej: Caballo, Espada, Arco)", value="Caballo")
+item_input = st.text_input("Buscar ítem (Ej: Caballo, Espada, Arco o ID en Inglés)", value="Caballo")
 
-# Mapeo simple automático
-mapping = {"caballo": "MOUNT_HORSE", "espada": "MAIN_SWORD", "arco": "2H_BOW"}
-base_id = mapping.get(item_input.lower().strip(), "MOUNT_HORSE")
+# Mapeo corregido con los IDs reales del cliente de Albion
+word = item_input.lower().strip()
+mapping = {
+    "caballo": "HORSE",        # ¡CORREGIDO! El juego usa T4_HORSE, T5_HORSE, etc.
+    "espada": "MAIN_SWORD",
+    "arco": "2H_BOW"
+}
+
+# Si la palabra está en nuestro diccionario, usa el valor técnico. Si escribes algo en inglés (ej: BAG), lo usa directo.
+if word in mapping:
+    base_id = mapping[word]
+else:
+    base_id = item_input.upper().strip()
 
 col1, col2, col3 = st.columns(3)
 with col1:
@@ -58,9 +68,14 @@ quality_map = {"Normal": 1, "Buena": 2, "Notable": 3, "Sobresaliente": 4, "Excel
 q_val = quality_map[quality]
 
 enc_suffix = enchant.split(" ")[0] if "—" in enchant else enchant
-item_id = f"T{tier}_{base_id}{enc_suffix if enc_suffix != '.0' else ''}"
 
-st.info(f"📦 ID Técnico Generado: **{item_id}** | Calidad: **{quality}**")
+# Construcción inteligente del ID técnico
+if enc_suffix != ".0":
+    item_id = f"T{tier}_{base_id}@{enc_suffix.replace('.', '')}"
+else:
+    item_id = f"T{tier}_{base_id}"
+
+st.info(f"📦 ID Técnico Enviado a la API: **{item_id}** | Calidad: **{quality}**")
 
 # Botón de búsqueda principal
 if st.button("🔄 BUSCAR EN EL MERCADO", use_container_width=True):
@@ -71,12 +86,10 @@ if st.button("🔄 BUSCAR EN EL MERCADO", use_container_width=True):
             response = requests.get(url)
             data_rows = []
             
-            # Controlamos si la API responde correctamente y trae una lista válida
             if response.status_code == 200 and isinstance(response.json(), list):
                 json_data = response.json()
                 
                 for loc in CIUDADES_INFO.keys():
-                    # Buscamos de forma segura si existe la localización en la respuesta
                     match = next((x for x in json_data if isinstance(x, dict) and x.get('location') == loc), None)
                     
                     sell_price = match.get('sell_price_min', 0) if match else 0
@@ -86,7 +99,7 @@ if st.button("🔄 BUSCAR EN EL MERCADO", use_container_width=True):
                         "Ciudad": loc,
                         "Orden de Venta": sell_price if sell_price else 0,
                         "Orden de Compra": buy_price if buy_price else 0,
-                        "Origen": "En vivo" if (sell_price or buy_price) else "Sin datos recientes"
+                        "Origen": "En vivo" if (sell_price > 0 or buy_price > 0) else "Sin datos recientes"
                     })
                 
                 st.session_state.search_results = pd.DataFrame(data_rows)
@@ -123,7 +136,6 @@ if st.session_state.search_results is not None:
     
     ciudades_reales = df[~df['Ciudad'].isin(['Caerleon', 'Black Market'])]
     
-    # Validamos que existan precios válidos mayores a 0 para calcular rutas automáticas
     df_valid_buy = ciudades_reales[ciudades_reales['Orden de Venta'] > 0]
     df_valid_sell = df[df['Orden de Compra'] > 0]
     
