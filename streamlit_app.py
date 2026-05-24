@@ -4,7 +4,7 @@ import pandas as pd
 from datetime import datetime
 
 # Configuración de la página estilo Albion (Modo Oscuro/Ancho)
-st.set_page_config(page_title="Albion Market Trader", page_icon="💰", layout="padded")
+st.set_page_config(page_title="Albion Market Trader", page_icon="💰", layout="wide")
 
 # Estilos CSS personalizados para imitar la interfaz del juego
 st.markdown("""
