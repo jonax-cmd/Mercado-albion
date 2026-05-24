@@ -10,40 +10,59 @@ SEARCH_URL = "https://gameinfo.albiononline.com/api/gameinfo/search"
 
 ALL_CITIES = ["Caerleon", "Bridgewatch", "Lymhurst", "Thetford", "Fort Sterling", "Martlock", "Brecilien"]
 
+# Items populares (más confiables)
+ITEMS_POPULARES = {
+    "T5_FIBER": "Fibra T5",
+    "T5_WOOD": "Madera T5",
+    "T5_HIDE": "Piel T5",
+    "T5_ORE": "Mineral T5",
+    "T5_PLANK": "Tabla T5",
+    "T4_PLATE_HELMET": "Casco de Placa T4",
+    "T4_MOUNT_HORSE": "Caballo T4",
+    "T5_BAG": "Bolsa T5",
+    "T5_SWORD": "Espada T5"
+}
+
 # ====================== SIDEBAR ======================
 with st.sidebar:
     st.header("🔍 Buscar Item")
     
-    search_query = st.text_input("Nombre del item", placeholder="Ej: Fibra, Caballo, Espada, Bag, Plate...")
-
+    # Opción 1: Items Populares (más estable)
+    modo = st.radio("Modo de búsqueda", ["Items Populares", "Búsqueda Libre"])
+    
     item_id = None
     item_name = ""
 
-    if search_query:
-        with st.spinner("Buscando..."):
-            try:
-                resp = requests.get(SEARCH_URL, params={"q": search_query, "limit": 25}, timeout=8)
-                if resp.status_code == 200:
-                    results = []
-                    for item in resp.json().get("items", []):
-                        name_es = item.get("localizedNames", {}).get("ES", "")
-                        name_en = item.get("localizedNames", {}).get("EN-US", "")
-                        final_name = name_es if name_es else name_en
-                        if final_name:
-                            results.append({"id": item["uniqueName"], "name": final_name})
-                    
-                    if results:
-                        selected = st.selectbox("Resultados", [r["name"] for r in results])
-                        item_id = next(r["id"] for r in results if r["name"] == selected)
-                        item_name = selected
-                    else:
-                        st.warning("No se encontraron resultados")
-            except:
-                st.error("Error en la búsqueda")
+    if modo == "Items Populares":
+        selected = st.selectbox("Selecciona item", options=list(ITEMS_POPULARES.keys()),
+                               format_func=lambda x: f"{x} → {ITEMS_POPULARES[x]}")
+        item_id = selected
+        item_name = ITEMS_POPULARES[selected]
+    
+    else:  # Búsqueda Libre
+        search_query = st.text_input("Buscar item (mejor en inglés)", placeholder="Ej: Fiber, Sword, Horse, Plate...")
+        if search_query:
+            with st.spinner("Buscando..."):
+                try:
+                    resp = requests.get(SEARCH_URL, params={"q": search_query, "limit": 20}, timeout=8)
+                    if resp.status_code == 200:
+                        results = []
+                        for item in resp.json().get("items", []):
+                            name_es = item.get("localizedNames", {}).get("ES", "")
+                            name_en = item.get("localizedNames", {}).get("EN-US", "")
+                            final_name = name_es if name_es else name_en
+                            if final_name:
+                                results.append({"id": item["uniqueName"], "name": final_name})
+                        
+                        if results:
+                            selected = st.selectbox("Resultados", [r["name"] for r in results])
+                            item_id = next(r["id"] for r in results if r["name"] == selected)
+                            item_name = selected
+                except:
+                    st.error("Error en búsqueda")
 
     st.divider()
     st.subheader("Filtros")
-    tier = st.selectbox("Tier", ["T4","T5","T6","T7","T8"], index=1)
     quality_options = st.multiselect("Calidad", 
                                     ["Normal", "Buena", "Sobresaliente", "Excelente"], 
                                     default=["Normal", "Buena"])
@@ -71,7 +90,6 @@ if item_id and st.button("🔄 Actualizar Precios", type="primary"):
                 
                 st.success(f"✅ {item_name} ({item_id})")
                 
-                # Mostrar por calidad
                 for q in sorted(df_clean['Calidad'].unique()):
                     q_name = {1:"Normal", 2:"Buena", 3:"Sobresaliente", 4:"Excelente"}.get(q, f"Calidad {q}")
                     df_q = df_clean[df_clean['Calidad'] == q].copy()
@@ -80,18 +98,14 @@ if item_id and st.button("🔄 Actualizar Precios", type="primary"):
                         continue
                         
                     st.markdown(f"### {q_name}")
-                    
-                    # Ordenar de menor a mayor precio de venta
                     df_q = df_q.sort_values(by='Precio Venta', ascending=True)
-                    
                     st.dataframe(df_q, use_container_width=True, hide_index=True)
                     st.divider()
             else:
-                st.warning("No hay órdenes activas para este item en este momento.")
+                st.warning("No hay órdenes activas actualmente")
         else:
-            st.error(f"Error al consultar la API ({response.status_code})")
-
+            st.error(f"Error API: {response.status_code}")
 else:
-    st.info("Busca un item en la barra lateral y presiona 'Actualizar Precios'")
+    st.info("Selecciona un item y presiona Actualizar Precios")
 
-st.caption("Datos en tiempo real • Albion Online Data Project")
+st.caption("Prueba primero con 'Items Populares' → Fibra T5 o Tabla T5")
