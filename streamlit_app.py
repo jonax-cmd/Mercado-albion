@@ -6,7 +6,7 @@ from datetime import datetime
 # Configuración de la página estilo Albion (Modo Oscuro/Ancho)
 st.set_page_config(page_title="Albion Market Trader", page_icon="💰", layout="wide")
 
-# Estilos CSS personalizados para imitar la interfaz del juego - CORREGIDO AQUÍ
+# Estilos CSS personalizados para imitar la interfaz del juego - CORREGIDO MANDATORIO
 st.markdown("""
     <style>
     .stApp { background-color: #12161a; color: #f1f1f1; }
@@ -15,7 +15,7 @@ st.markdown("""
     .profit-positive { color: #2ecc71; font-weight: bold; background-color: rgba(46, 204, 113, 0.1); padding: 10px; border-radius: 5px; }
     .profit-negative { color: #e74c3c; font-weight: bold; background-color: rgba(231, 76, 60, 0.1); padding: 10px; border-radius: 5px; }
     </style>
-""", unsafe_allowed_html=True)
+""", unsafe_allow_html=True)
 
 # Diccionario de ciudades con sus colores oficiales del Lore y emojis
 CIUDADES_INFO = {
@@ -124,7 +124,7 @@ if st.session_state.search_results is not None:
                 Orden de Compra: <span class="price-text">{row['Orden de Compra']:,}</span> 
                 <br><small style='color: #888;'>Dato: {row['Origen']}</small>
             </div>
-        """, unsafe_allowed_html=True)
+        """, unsafe_allow_html=True)
 
     # --- SECCIÓN 3: EL NUEVO MÓDULO DE ARBITRAJE ---
     st.markdown("---")
@@ -153,14 +153,14 @@ if st.session_state.search_results is not None:
         col_p1, col_p2 = st.columns(2)
         with col_p1:
             if neto_prem > 0:
-                st.markdown(f"<div class='profit-positive'>👑 Con Premium (4% Tax):<br>+{neto_prem:,} plata / unidad</div>", unsafe_allowed_html=True)
+                st.markdown(f"<div class='profit-positive'>👑 Con Premium (4% Tax):<br>+{neto_prem:,} plata / unidad</div>", unsafe_allow_html=True)
             else:
-                st.markdown(f"<div class='profit-negative'>👑 Con Premium (4% Tax):<br>{neto_prem:,} plata (Pérdida)</div>", unsafe_allowed_html=True)
+                st.markdown(f"<div class='profit-negative'>👑 Con Premium (4% Tax):<br>{neto_prem:,} plata (Pérdida)</div>", unsafe_allow_html=True)
         with col_p2:
             if neto_sin > 0:
                 st.markdown(f"<div class='profit-positive'>⚠️ Sin Premium (8% Tax):<br>+{neto_sin:,} plata / unidad</div>", unsafe_allowed_html=True)
             else:
-                st.markdown(f"<div class='profit-negative'>⚠️ Sin Premium (8% Tax):<br>{neto_sin:,} plata (Pérdida)</div>", unsafe_allowed_html=True)
+                st.markdown(f"<div class='profit-negative'>⚠️ Sin Premium (8% Tax):<br>{neto_sin:,} plata (Pérdida)</div>", unsafe_allow_html=True)
 
     # 2. Calculadora Manual Personalizada
     st.markdown("### 🗺️ Planificar Ruta Personalizada")
@@ -179,6 +179,6 @@ if st.session_state.search_results is not None:
     
     st.markdown(f"**Costo en {c_origen}:** {p_compra:,} | **Venta en {c_destino}:** {p_venta:,}")
     if ganancia_manual > 0:
-        st.markdown(f"<div class='profit-positive'>✅ Ganancia de tu viaje: +{ganancia_manual:,} plata neta por unidad</div>", unsafe_allowed_html=True)
+        st.markdown(f"<div class='profit-positive'>✅ Ganancia de tu viaje: +{ganancia_manual:,} plata neta por unidad</div>", unsafe_allow_html=True)
     else:
-        st.markdown(f"<div class='profit-negative'>❌ Pérdida de tu viaje: {ganancia_manual:,} plata neta por unidad</div>", unsafe_allowed_html=True)
+        st.markdown(f"<div class='profit-negative'>❌ Pérdida de tu viaje: {ganancia_manual:,} plata neta por unidad</div>", unsafe_allow_html=True)
