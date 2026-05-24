@@ -3,31 +3,32 @@ import requests
 import pandas as pd
 
 st.set_page_config(page_title="Albion Precios - Debug", layout="wide")
-st.title("🔧 Albion Precios - Versión Rústica (Debug)")
+st.title("🔧 Albion Precios - Versión Rústica (Corregida)")
 
 BASE_URL = "https://west.albion-online-data.com/api/v2"
 
-# Items que suelen tener datos
 ITEMS_PRUEBA = {
     "T5_FIBER": "Fibra T5",
     "T5_WOOD": "Madera T5",
     "T5_HIDE": "Piel T5",
     "T5_ORE": "Mineral T5",
-    "T4_PLATE_HELMET": "Casco de Placa T4",
     "T5_PLANK": "Tabla T5",
+    "T4_PLATE_HELMET": "Casco de Placa T4",
     "T4_BAG": "Bolsa T4"
 }
 
-# Sidebar simple
 with st.sidebar:
     st.header("Configuración")
-    item_key = st.selectbox("Selecciona Item", options=list(ITEMS_PRUEBA.keys()), format_func=lambda x: f"{x} → {ITEMS_PRUEBA[x]}")
+    item_key = st.selectbox("Selecciona Item", options=list(ITEMS_PRUEBA.keys()), 
+                           format_func=lambda x: f"{x} → {ITEMS_PRUEBA[x]}")
+    
     ciudades = st.multiselect("Ciudades", 
-                              ["Caerleon", "Bridgewatch", "Lymhurst", "Thetford", "Fort Sterling", "Martlock"],
-                              default=["Caerleon", "Bridgewatch", "Lymhurst"])
+                ["Caerleon", "Bridgewatch", "Lymhurst", "Thetford", "Fort Sterling", "Martlock"],
+                default=["Caerleon", "Bridgewatch", "Lymhurst"])
+    
     calidades = st.multiselect("Calidades", [1,2,3,4,5], default=[1,2])
 
-# ====================== CONSULTA A LA API ======================
+# ====================== CONSULTA ======================
 if st.button("🔄 Consultar Precios", type="primary"):
     with st.spinner("Consultando API..."):
         item_id = item_key
@@ -37,7 +38,7 @@ if st.button("🔄 Consultar Precios", type="primary"):
             "qualities": ",".join(map(str, calidades))
         }
         
-        st.info(f"URL: {url}?locations={params['locations']}&qualities={params['qualities']}")
+        st.info(f"Consultando: {item_id}")
         
         try:
             response = requests.get(url, params=params, timeout=10)
@@ -45,22 +46,26 @@ if st.button("🔄 Consultar Precios", type="primary"):
             
             if response.status_code != 200:
                 st.error(f"Error HTTP: {response.status_code}")
-                st.write(response.text)
+                st.write(response.text[:500])
             else:
                 data = response.json()
                 st.success(f"Datos recibidos: {len(data)} registros")
                 
                 if data:
                     df = pd.DataFrame(data)
-                    # Mostrar columnas importantes
-                    st.dataframe(df[['location', 'quality', 'sell_price_min', 'sell_price_min_date', 
-                                   'buy_price_max', 'buy_price_max_date']], 
-                               use_container_width=True)
+                    
+                    # Mostrar las columnas reales que devuelve la API
+                    st.write("Columnas recibidas:", list(df.columns))
+                    
+                    # Tabla limpia
+                    df_clean = df[['city', 'quality', 'sell_price_min', 'buy_price_max']].copy()
+                    df_clean = df_clean.rename(columns={'city': 'Ciudad'})
+                    st.dataframe(df_clean, use_container_width=True)
                 else:
-                    st.warning("La API devolvió lista vacía")
+                    st.warning("La API devolvió datos vacíos")
                     
         except Exception as e:
-            st.error(f"Error de conexión: {e}")
+            st.error(f"Error: {e}")
 
 st.divider()
-st.caption("Versión simple para diagnosticar por qué salen ceros")
+st.caption("Versión corregida - Ahora usa la columna 'city'")
